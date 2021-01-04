@@ -7,8 +7,8 @@ function _init()
 
   orig_field_of_view=1/6
   orig_draw_distance=6
-  orig_turn_amount=.01
-  orig_speed = .1
+  orig_turn_amount=.005
+  orig_speed = .05
 
   --debug stuff, disable for release
   force_draw_width=false
@@ -24,6 +24,7 @@ function _init()
   turn_amount=orig_turn_amount
   speed = orig_speed
   height_zoom_ratio = 1.05
+  screen_width = -sin(field_of_view/2) * 2
 
   max_iterations = 20
   max_wall_height = 0.5
@@ -124,6 +125,7 @@ function raycast_walls()
 
   local total_time
   if changed_position then
+    cached_grid={}
     total_time=1
   else
     total_time=2
@@ -139,7 +141,6 @@ function raycast_walls()
   largest_width=0
   local angle_from_ground = 1/4 - field_of_view/2
   local start_distance=player_height * sin(angle_from_ground) / cos(angle_from_ground) * -0.03
-  local screen_width = -sin(field_of_view/2) * 2
   --printh(start_distance)
 
   while screenx<=127 do
@@ -161,32 +162,46 @@ function raycast_walls()
     found=false
 
     distance=start_distance
-    step_ratio=1.2
+    step_ratio=1.1
     local height
     local distance_to_pixel_col = 1 / cos((pa-player.bearing).val)
     local lowest_y = 128
     --printh(distance)
     debugged=false
+    local current_draw_distance=draw_distance*player_height
+    local current_max_iterations=max_iterations
+    local blocker_ratio=false
 
-    while not found and distance < draw_distance*player_height do
-      iterations = mandelbrot(player.coords.x+pv.x*distance,player.coords.y+pv.y*distance)
+    while not found and distance < current_draw_distance do
+
+      iterations = mandelbrot(player.coords.x+pv.x*distance, player.coords.y+pv.y*distance, current_max_iterations, distance)
       height = max_wall_height*(1-iterations/max_iterations)
       relative_height = height - player_height
       screen_distance_from_center = relative_height * distance_to_pixel_col/distance
       if debug and screenx == 64 and not debugged then
         debugged=true
-        printh("screenx")
-        printh(distance_to_pixel_col)
+        --printh("screenx")
+        --printh(distance_to_pixel_col)
       end
       pixels_from_center = 128 * screen_distance_from_center/screen_width
       screeny = round(63.5 - pixels_from_center)
 
       if screeny < lowest_y then
-        rectfill(screenx, lowest_y-1, screenx+draw_width-1, screeny, colors[1+flr(iterations/max_iterations*15)])
+        blocker_ratio = relative_height / distance
+
+        if relative_height > 0 then
+          current_draw_distance=distance * (max_wall_height-player_height)/relative_height
+        end
+
+        rectfill(screenx, lowest_y-1, screenx+draw_width-1, screeny, colors[1+flr((iterations/max_iterations)^2*15)])
         lowest_y = screeny
       end
 
       distance*=step_ratio
+      if blocker_ratio then
+        min_height = player_height + blocker_ratio * distance
+        current_max_iterations = max_iterations * (-1 * min_height / max_wall_height + 1)
+      end
     end
 
     screenx+=draw_width
@@ -194,9 +209,11 @@ function raycast_walls()
 end
 
 cached_grid={}
-function mandelbrot(x, y)
-  --x=round(10*x)/10
-  --y=round(10*y)/10
+function mandelbrot(x, y, current_max_iterations, distance)
+  grid_scale=10/player_height/distance
+  --grid_scale=20
+  x=round(grid_scale*x)/grid_scale
+  y=round(grid_scale*y)/grid_scale
   local key=tostr(x,true)..tostr(y,true)
   if cached_grid[key] then
     return cached_grid[key]
@@ -212,7 +229,7 @@ function mandelbrot(x, y)
   local xswap
 
   local i=0
-  while i < max_iterations and abs(zx) < 2 and abs(zy) < 2 do
+  while i < current_max_iterations and abs(zx) < 2 and abs(zy) < 2 do
     i+= 1
 
     xswap = zx*zx - zy*zy + x
@@ -220,15 +237,20 @@ function mandelbrot(x, y)
     zx = xswap
   end
 
-  --cached_grid[key] = i
+  cached_grid[key] = i
 
   return i
 end
 
 function screenx_to_angle(screenx)
-  local screen_width = -sin(field_of_view/2) * 2
   local offset_from_center_of_screen = (screenx - 127/2) * screen_width/128
   return makeangle(player.bearing.val+atan2(offset_from_center_of_screen, 1)+1/4)
+end
+
+--NB - not currently used
+function angle_to_screenx(angle)
+  local offset_from_center_of_screen = -sin(angle.val-player.bearing.val)
+  return round(offset_from_center_of_screen/screen_width * 128 + 127/2)
 end
 
 makeangle = (function()
