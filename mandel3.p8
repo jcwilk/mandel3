@@ -35,6 +35,8 @@ function _init()
     coords=makevec2d(-0.5,0),
     bearing=makeangle(0)
   }
+
+  buffer_manager = build_buffer_manager()
 end
 
 function _update60()
@@ -115,135 +117,161 @@ function draw_stars()
 end
 
 function raycast_walls()
-  local buffer_percent=.2
-  local start_time=stat(1)
-  local total_time
   skipped_columns=0
 
-  local pa,pv,currx,curry,found,intx,inty,xstep,ystep,distance
   local screenx=0
-  if changed_position then
-    cached_grid={}
-    total_time=1
-  else
-    total_time=4
-  end
-  --total_time-=.25
-
-  local alotted_time=total_time-start_time
-  local buffer_time=buffer_percent*alotted_time
-  start_time+=buffer_time
-  alotted_time-=buffer_time
+  -- if changed_position then
+  --   cached_grid={}
+  --   total_time=1
+  -- else
+  --   total_time=4
+  -- end
 
   local draw_width
   largest_width=0
   local angle_from_ground = 1/4 - field_of_view/2
 
+  buffer_manager:reset_state()
+
   while screenx<=127 do
-    behind_time=stat(1)-(start_time+screenx/127*alotted_time-buffer_time)
-    draw_width=128*behind_time/alotted_time
+    draw_width=128*buffer_manager:skip_ratio(screenx/128)
     draw_width=flr(mid(1,8,draw_width))
     if force_draw_width then
       draw_width=force_draw_width
     end
     largest_width=max(largest_width,draw_width)
     skipped_columns+=draw_width-1
-
-    pa=screenx_to_angle(screenx+(draw_width-1)/2)
-    pv=pa:tovector()
-    --printh("vec"..tostr(pv.x)..","..tostr(pv.y))
-
-    currx=round(player.coords.x/grid_size)*grid_size
-    curry=round(player.coords.y/grid_size)*grid_size
-    xstep = towinf(pv.x)*grid_size
-    ystep = towinf(pv.y)*grid_size
-
-    -- TODO: make this stuff work with the variable grid size
-    -- take the largest coord difference from player coord (eg, if most of the difference is across x, then take x difference)
-    -- for some number Z indicating how big the grid is, make the grid ceil(x_difference/Z)
-    -- that way it won't switch grids in the middle of a larger grid
-    -- for this to work, the result needs to be only powers of 2... or rather, each new grid size needs to be double the last
-    -- haven't figured out whether the raw value should be rounded up to the next power of two or down to the last
-
-    if abs(pv.x) > abs(pv.y) then
-      intx= currx - xstep/2
-      distance = (intx - player.coords.x) / pv.x
-      inty= player.coords.y + distance * pv.y
-    else
-      inty= curry - ystep/2
-      distance = (inty - player.coords.y) / pv.y
-      intx= player.coords.x + distance * pv.x
-    end
-
-    found=false
-
-    local height
-    local distance_to_pixel_col = 1 / cos((pa-player.bearing).val)
-    local lowest_y = 128
-    --printh(distance)
-    debugged=false
-    local current_draw_distance=draw_distance*player_height
-    local current_max_iterations=max_iterations
-    local blocker_ratio=false
-
-    while not found and distance < current_draw_distance do
-      if (currx + xstep/2 - intx) / pv.x < (curry + ystep/2 - inty) / pv.y then
-        intx= currx + xstep/2
-        distance = (intx - player.coords.x) / pv.x
-        inty= player.coords.y + distance * pv.y
-        currx+= xstep
-      else
-        inty= curry + ystep/2
-        distance = (inty - player.coords.y) / pv.y
-        intx= player.coords.x + distance * pv.x
-        curry+= ystep
-      end
-
-      iterations = mandelbrot(currx, curry, current_max_iterations)
-
-      height = max_wall_height*(1-iterations/max_iterations)
-      relative_height = height - player_height
-
-      if relative_height < 0 then
-        -- hack to make the distance calculated to the far wall rather than close wall for if we can see the top so it doesn't look empty
-        -- distance gets overwritten each iteration so this is (for now) fine to do
-        -- there's probably a more efficient way to do this, but screw it
-        if (currx + xstep/2 - intx) / pv.x < (curry + ystep/2 - inty) / pv.y then
-          distance = (currx + xstep/2 - player.coords.x) / pv.x
-        else
-          distance = (curry + ystep/2 - player.coords.y) / pv.y
-        end
-      end
-
-      screen_distance_from_center = relative_height * distance_to_pixel_col/distance
-      if debug and screenx == 64 and not debugged then
-        debugged=true
-        --printh("screenx")
-        --printh(distance_to_pixel_col)
-      end
-      pixels_from_center = 128 * screen_distance_from_center/screen_width
-      screeny = round(63.5 - pixels_from_center)
-
-      if screeny < lowest_y then
-        blocker_ratio = relative_height / distance
-
-        if relative_height > 0 then
-          current_draw_distance=min(current_draw_distance,distance * (max_wall_height-player_height)/relative_height)
-        end
-
-        rectfill(screenx, lowest_y-1, screenx+draw_width-1, screeny, colors[1+flr((iterations/max_iterations)^2*15)])
-        lowest_y = screeny
-      end
-
-      if blocker_ratio then
-        min_height = player_height + blocker_ratio * distance
-        current_max_iterations = max_iterations * (-1 * min_height / max_wall_height + 1)
-      end
-    end
-
+    raycast_pixel_column(screenx+round((draw_width-1)/2), screenx, draw_width)
     screenx+=draw_width
   end
 end
+
+function raycast_pixel_column(calc_screenx,screenx,draw_width)
+  local pa,pv,currx,curry,found,intx,inty,xstep,ystep,distance
+
+  pa=screenx_to_angle(screenx+(draw_width-1)/2)
+  pv=pa:tovector()
+  --printh("vec"..tostr(pv.x)..","..tostr(pv.y))
+
+  currx=round(player.coords.x/grid_size)*grid_size
+  curry=round(player.coords.y/grid_size)*grid_size
+  xstep=towinf(pv.x)*grid_size
+  ystep=towinf(pv.y)*grid_size
+
+  -- TODO: make this stuff work with the variable grid size
+  -- take the largest coord difference from player coord (eg, if most of the difference is across x, then take x difference)
+  -- for some number Z indicating how big the grid is, make the grid ceil(x_difference/Z)
+  -- that way it won't switch grids in the middle of a larger grid
+  -- for this to work, the result needs to be only powers of 2... or rather, each new grid size needs to be double the last
+  -- haven't figured out whether the raw value should be rounded up to the next power of two or down to the last
+
+  if abs(pv.x) > abs(pv.y) then
+    intx= currx - xstep/2
+    distance = (intx - player.coords.x) / pv.x
+    inty= player.coords.y + distance * pv.y
+  else
+    inty= curry - ystep/2
+    distance = (inty - player.coords.y) / pv.y
+    intx= player.coords.x + distance * pv.x
+  end
+
+  found=false
+
+  local height
+  local distance_to_pixel_col = 1 / cos((pa-player.bearing).val)
+  local lowest_y = 128
+  --printh(distance)
+  debugged=false
+  local current_draw_distance=draw_distance*player_height
+  local current_max_iterations=max_iterations
+  local blocker_ratio=false
+
+  while not found and distance < current_draw_distance do
+    if (currx + xstep/2 - intx) / pv.x < (curry + ystep/2 - inty) / pv.y then
+      intx= currx + xstep/2
+      distance = (intx - player.coords.x) / pv.x
+      inty= player.coords.y + distance * pv.y
+      currx+= xstep
+    else
+      inty= curry + ystep/2
+      distance = (inty - player.coords.y) / pv.y
+      intx= player.coords.x + distance * pv.x
+      curry+= ystep
+    end
+
+    iterations = mandelbrot(currx, curry, current_max_iterations)
+
+    height = max_wall_height*(1-iterations/max_iterations)
+    relative_height = height - player_height
+
+    if relative_height < 0 then
+      -- hack to make the distance calculated to the far wall rather than close wall for if we can see the top so it doesn't look empty
+      -- distance gets overwritten each iteration so this is (for now) fine to do
+      -- there's probably a more efficient way to do this, but screw it
+      if (currx + xstep/2 - intx) / pv.x < (curry + ystep/2 - inty) / pv.y then
+        distance = (currx + xstep/2 - player.coords.x) / pv.x
+      else
+        distance = (curry + ystep/2 - player.coords.y) / pv.y
+      end
+    end
+
+    screen_distance_from_center = relative_height * distance_to_pixel_col/distance
+    if debug and screenx == 64 and not debugged then
+      debugged=true
+      --printh("screenx")
+      --printh(distance_to_pixel_col)
+    end
+    pixels_from_center = 128 * screen_distance_from_center/screen_width
+    screeny = round(63.5 - pixels_from_center)
+
+    if screeny < lowest_y then
+      blocker_ratio = relative_height / distance
+
+      if relative_height > 0 then
+        current_draw_distance=min(current_draw_distance,distance * (max_wall_height-player_height)/relative_height)
+      end
+
+      rectfill(screenx, lowest_y-1, screenx+draw_width-1, screeny, colors[1+flr((iterations/max_iterations)^2*15)])
+      lowest_y = screeny
+    end
+
+    if blocker_ratio then
+      min_height = player_height + blocker_ratio * distance
+      current_max_iterations = max_iterations * (-1 * min_height / max_wall_height + 1)
+    end
+  end
+
+  return draw_width
+end
+
+build_buffer_manager = (function()
+  local buffer_percent=.2
+  local total_time=1 -- todo - make this longer when stationary
+
+  local function reset_state(obj)
+    obj.start_time=stat(1)
+    obj.alotted_time=total_time-obj.start_time
+
+    obj.start_time+=buffer_percent*obj.alotted_time
+    obj.alotted_time-=buffer_percent*obj.alotted_time
+  end
+
+  local function skip_ratio(obj,progress_ratio)
+    --behind_time=stat(1)-(obj.start_time+progress_ratio*obj.alotted_time-obj.buffer_time)
+    --skip_ratio=behind_time/obj.alotted_time
+    --v reduced from ^
+    return (stat(1)-obj.start_time)/obj.alotted_time + buffer_percent - progress_ratio
+  end
+
+  return function()
+    local obj={
+      reset_state=reset_state,
+      skip_ratio=skip_ratio
+    }
+    obj:reset_state()
+    return obj
+  end
+end)()
 
 cached_grid={}
 function mandelbrot(x, y, current_max_iterations)
