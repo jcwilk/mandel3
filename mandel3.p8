@@ -248,19 +248,12 @@ function raycast_pixel_column(pixel_column)
       screeny = round(63.5 - pixels_from_center)
 
       if screeny < lowest_y then
-        blocker_ratio = relative_height / distance
-
         if relative_height > 0 then
           current_draw_distance=min(current_draw_distance,distance * (max_wall_height-player_height)/relative_height)
         end
 
         rectfill(screenx, lowest_y-1, screenx+draw_width-1, screeny, colors[1+flr((iterations/max_iterations)^2*15)])
         lowest_y = screeny
-      end
-
-      if blocker_ratio then
-        min_height = player_height + blocker_ratio * distance
-        current_max_iterations = max_iterations * (-1 * min_height / max_wall_height + 1)
       end
     end
 
