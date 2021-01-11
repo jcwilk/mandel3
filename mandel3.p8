@@ -80,14 +80,25 @@ function tick_bearing_v()
   end
 end
 
+progressive_coroutine=false
+first_draw=true
 function _draw()
-  draw_background()
-
-  raycast_walls()
+  if changed_position or first_draw then
+    draw_background()
+    raycast_walls()
+    progressive_coroutine=false
+  else
+    if not progressive_coroutine then
+      progressive_coroutine=cocreate(raycast_walls_progressively)
+    end
+    assert(coresume(progressive_coroutine))
+  end
 
   if debug then
     debug_info()
   end
+
+  first_draw=false
 end
 
 function debug_info()
@@ -124,7 +135,6 @@ function raycast_walls()
 
   local draw_width
   largest_width=0
-  local angle_from_ground = 1/4 - field_of_view/2
 
   if changed_position then
     pixel_columns={}
@@ -139,27 +149,59 @@ function raycast_walls()
     draw_width=128*buffer_manager:skip_ratio()
     draw_width=flr(mid(1,8,draw_width))
     if force_draw_width then
-      draw_width=force_draw_width
+      draw_width=1
     end
     largest_width=max(largest_width,draw_width)
     skipped_columns+=draw_width-1
     calc_screenx=screenx+round((draw_width-1)/2)
+
     if not pixel_columns[calc_screenx] then
       pixel_columns[calc_screenx] = {
-        cofunction=cocreate(raycast_pixel_column),
+        coroutine=cocreate(raycast_pixel_column),
         calc_screenx=calc_screenx,
         screenx=screenx,
         draw_width=draw_width
       }
-      assert(coresume(pixel_columns[calc_screenx].cofunction, pixel_columns[calc_screenx]))
+      assert(coresume(pixel_columns[calc_screenx].coroutine, pixel_columns[calc_screenx]))
     else
       pixel_columns[calc_screenx].draw_width=draw_width
       pixel_columns[calc_screenx].screenx=screenx
-      assert(coresume(pixel_columns[calc_screenx].cofunction))
+      assert(coresume(pixel_columns[calc_screenx].coroutine))
     end
 
     screenx+=draw_width
     buffer_manager.progress_ratio=screenx/128
+  end
+end
+
+function raycast_walls_progressively()
+  local screenx=0
+  pixel_columns={}
+  buffer_manager:reset_state(1)
+
+  while true do
+    if not pixel_columns[screenx] then
+      pixel_columns[screenx] = {
+        coroutine=cocreate(raycast_pixel_column),
+        calc_screenx=screenx,
+        screenx=screenx,
+        draw_width=1
+      }
+      assert(coresume(pixel_columns[screenx].coroutine, pixel_columns[screenx]))
+    else
+      assert(coresume(pixel_columns[screenx].coroutine))
+    end
+
+    screenx+=1
+    if screenx > 127 then
+      screenx=0
+    end
+
+    buffer_manager.progress_ratio+=1/128
+    if not buffer_manager:is_finishable(1/128) then
+      yield()
+      buffer_manager:reset_state(1)
+    end
   end
 end
 
@@ -283,10 +325,22 @@ build_buffer_manager = (function()
     return (stat(1)-obj.start_time)/obj.alotted_time + buffer_percent - obj.progress_ratio
   end
 
+  local function is_finishable(obj,additional_progress)
+    local spent_time = stat(1) - obj.start_time
+    -- local remaining_time = obj.alotted_time - spent_time
+    -- local progress_rate = obj.progress_ratio / spent_time
+    -- local additional_time_to_finish = additional_progress / progress_rate
+    -- return remaining_time >= additional_time_to_finish
+    -- v from this ^
+
+    return spent_time <= 0 or obj.alotted_time/spent_time - 1 >= additional_progress / obj.progress_ratio
+  end
+
   return function()
     local obj={
       reset_state=reset_state,
-      skip_ratio=skip_ratio
+      skip_ratio=skip_ratio,
+      is_finishable=is_finishable
     }
     obj:reset_state(1)
     return obj
@@ -295,6 +349,7 @@ end)()
 
 cached_grid={}
 function mandelbrot(x, y, current_max_iterations)
+  y=abs(y)
   local key=tostr(x,true)..tostr(y,true)
   if cached_grid[key] then
     return cached_grid[key]
