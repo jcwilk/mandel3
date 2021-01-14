@@ -29,7 +29,7 @@ function _init()
   max_iterations = 30
   max_wall_height = 0.5
   player_height = 0.3
-  grid_size = 1/(2^4)
+  grid_size = 1/(2^5)
 
   player = {
     coords=makevec2d(-0.5,0),
@@ -207,8 +207,9 @@ end
 
 function raycast_pixel_column(pixel_column)
   local pa,pv,currx,curry,found,intx,inty,xstep,ystep,distance
-  local height,distance_to_pixel_col,lowest_y,current_draw_distance,current_max_iterations,blocker_ratio
+  local height,distance_to_pixel_col,lowest_y,current_draw_distance,blocker_ratio
   local calc_screenx,screenx,draw_width
+  local current_max_iterations=max_iterations
 
   calc_screenx=pixel_column.calc_screenx
   pa=screenx_to_angle(calc_screenx)
@@ -252,7 +253,6 @@ function raycast_pixel_column(pixel_column)
     distance_to_pixel_col = 1 / cos((pa-player.bearing).val)
     lowest_y = 128
     current_draw_distance=draw_distance*player_height
-    current_max_iterations=max_iterations
     blocker_ratio=false
 
     while not found and distance < current_draw_distance do
@@ -270,7 +270,7 @@ function raycast_pixel_column(pixel_column)
 
       iterations = mandelbrot(currx, curry, current_max_iterations)
 
-      height = max_wall_height*(1-iterations/max_iterations)
+      height = max_wall_height*(1-iterations_easing(iterations, current_max_iterations))
       relative_height = height - player_height
 
       if relative_height < 0 then
@@ -294,15 +294,22 @@ function raycast_pixel_column(pixel_column)
           current_draw_distance=min(current_draw_distance,distance * (max_wall_height-player_height)/relative_height)
         end
 
-        rectfill(screenx, lowest_y-1, screenx+draw_width-1, screeny, colors[1+flr((iterations/max_iterations)^2*15)])
+        rectfill(screenx, lowest_y-1, screenx+draw_width-1, screeny, colors[1+flr(iterations_easing(iterations, current_max_iterations)*15)])
         lowest_y = screeny
+        --printh(draw_width)
       end
     end
 
     yield()
 
+    current_max_iterations+=1
+
     first_time=false
   end
+end
+
+function iterations_easing(iterations, current_max)
+  return (iterations/current_max)^0.5
 end
 
 build_buffer_manager = (function()
@@ -351,8 +358,12 @@ cached_grid={}
 function mandelbrot(x, y, current_max_iterations)
   y=abs(y)
   local key=tostr(x,true)..tostr(y,true)
-  if cached_grid[key] then
-    return cached_grid[key]
+  if not cached_grid[key] then
+    cached_grid[key]={
+      x=0,
+      y=0,
+      i=0
+    }
   end
 
   -- if true then
@@ -360,11 +371,11 @@ function mandelbrot(x, y, current_max_iterations)
   --   --return 8
   -- end
 
-  local zx=0
-  local zy=0
+  local zx=cached_grid[key].x
+  local zy=cached_grid[key].y
   local xswap
 
-  local i=0
+  local i=cached_grid[key].i
   while i < current_max_iterations and abs(zx) < 2 and abs(zy) < 2 do
     i+= 1
 
@@ -373,7 +384,9 @@ function mandelbrot(x, y, current_max_iterations)
     zx = xswap
   end
 
-  cached_grid[key] = i
+  cached_grid[key].x = zx
+  cached_grid[key].y = zy
+  cached_grid[key].i = i
 
   return i
 end
