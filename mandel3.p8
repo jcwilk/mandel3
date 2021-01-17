@@ -29,7 +29,7 @@ function _init()
   max_iterations = 30
   max_wall_height = 0.5
   player_height = 0.3
-  grid_size = 1/(2^5)
+  grid_size = 1/(2^4)
 
   player = {
     coords=makevec2d(-0.5,0),
@@ -43,6 +43,7 @@ function _update60()
   local offset = makevec2d(0,0)
   local facing = player.bearing:tovector()
   changed_position=false
+  changed_height=false
   if btn(0) then
     changed_position=true
     player.bearing-=turn_amount
@@ -60,11 +61,11 @@ function _update60()
     offset-=facing
   end
   if btn(4) then
-    changed_position=true
+    changed_height=true
     player_height/= height_zoom_ratio
   end
   if btn(5) then
-    changed_position=true
+    changed_height=true
     player_height*= height_zoom_ratio
   end
 
@@ -88,6 +89,9 @@ function _draw()
     raycast_walls()
     progressive_coroutine=false
   else
+    if changed_height then
+      draw_background()
+    end
     if not progressive_coroutine then
       progressive_coroutine=cocreate(raycast_walls_progressively)
     end
@@ -110,8 +114,9 @@ function debug_info()
 end
 
 function draw_background()
-  rectfill(0,0,127,63,sky_color)
-  rectfill(0,64,127,127,ground_color)
+  cls()
+  --rectfill(0,0,127,63,1) --sky
+  --rectfill(0,64,127,127,0) --ground
   draw_stars()
 end
 
@@ -138,7 +143,8 @@ function raycast_walls()
 
   if changed_position then
     pixel_columns={}
-    cached_grid={}
+    cached_grid={} -- NB: disabling this only works for large grids, otherwise mem will fill quickly
+    --also ^ disabling this doesn't work as expected until progressive is doing all the rendering and current_max_iterations isn't getting reset
     buffer_manager:reset_state(1)
   else
     buffer_manager:reset_state(4)
@@ -160,7 +166,8 @@ function raycast_walls()
         coroutine=cocreate(raycast_pixel_column),
         calc_screenx=calc_screenx,
         screenx=screenx,
-        draw_width=draw_width
+        draw_width=draw_width,
+        prog_man={current_max_iterations=1}
       }
       assert(coresume(pixel_columns[calc_screenx].coroutine, pixel_columns[calc_screenx]))
     else
@@ -178,6 +185,9 @@ function raycast_walls_progressively()
   local screenx=0
   pixel_columns={}
   buffer_manager:reset_state(1)
+  local prog_man={
+    current_max_iterations=1
+  }
 
   while true do
     if not pixel_columns[screenx] then
@@ -185,6 +195,7 @@ function raycast_walls_progressively()
         coroutine=cocreate(raycast_pixel_column),
         calc_screenx=screenx,
         screenx=screenx,
+        prog_man=prog_man,
         draw_width=1
       }
       assert(coresume(pixel_columns[screenx].coroutine, pixel_columns[screenx]))
@@ -196,20 +207,23 @@ function raycast_walls_progressively()
     if screenx > 127 then
       screenx=0
     end
+    --screenx=flr(rnd(128))
 
     buffer_manager.progress_ratio+=1/128
     if not buffer_manager:is_finishable(1/128) then
       yield()
-      buffer_manager:reset_state(1)
+      prog_man.current_max_iterations+=1/6
+
+      buffer_manager:reset_state(.9) --temporary hack to sidestep the buffer manager bug where it isn't compensating for the buffer
     end
   end
 end
 
 function raycast_pixel_column(pixel_column)
   local pa,pv,currx,curry,found,intx,inty,xstep,ystep,distance
-  local height,distance_to_pixel_col,lowest_y,current_draw_distance,blocker_ratio
+  local height,distance_to_pixel_col,max_y,current_draw_distance,blocker_ratio
   local calc_screenx,screenx,draw_width
-  local current_max_iterations=max_iterations
+  local prog_man=pixel_column.prog_man
 
   calc_screenx=pixel_column.calc_screenx
   pa=screenx_to_angle(calc_screenx)
@@ -250,10 +264,11 @@ function raycast_pixel_column(pixel_column)
 
     found=false
 
-    distance_to_pixel_col = 1 / cos((pa-player.bearing).val)
-    lowest_y = 128
-    current_draw_distance=draw_distance*player_height
+    distance_to_pixel_col = cos((pa-player.bearing).val)
+    max_y = 128
+    current_draw_distance=min(2,draw_distance*player_height)
     blocker_ratio=false
+    did_draw=false
 
     while not found and distance < current_draw_distance do
       if (currx + xstep/2 - intx) / pv.x < (curry + ystep/2 - inty) / pv.y then
@@ -268,9 +283,15 @@ function raycast_pixel_column(pixel_column)
         curry+= ystep
       end
 
-      iterations = mandelbrot(currx, curry, current_max_iterations)
+      iterations = mandelbrot(currx, curry, prog_man.current_max_iterations) --flr(10*(currx+curry))
 
-      height = max_wall_height*(1-iterations_easing(iterations, current_max_iterations))
+      -- if iterations > prog_man.current_max_iterations then
+      --   printh(iterations)
+      --   printh(prog_man.current_max_iterations)
+      --   gdsfkgldafg()
+      -- end
+
+      height = (prog_man.current_max_iterations-iterations)/1000
       relative_height = height - player_height
 
       if relative_height < 0 then
@@ -284,36 +305,37 @@ function raycast_pixel_column(pixel_column)
         end
       end
 
-      screen_distance_from_center = relative_height * distance_to_pixel_col/distance
+      screen_distance_from_center = relative_height /(distance*distance_to_pixel_col) -- TODO - this doesn't seem right but it works, hmm...
 
-      pixels_from_center = 128 * screen_distance_from_center/screen_width
-      screeny = round(63.5 - pixels_from_center)
+      pixels_from_center = 128 * (screen_distance_from_center/screen_width)
+      screeny = flr(63.5 - pixels_from_center)
 
-      if screeny < lowest_y then
-        if relative_height > 0 then
-          current_draw_distance=min(current_draw_distance,distance * (max_wall_height-player_height)/relative_height)
+      if screeny <= max_y then
+        if iterations < flr(prog_man.current_max_iterations) then
+          if relative_height > 0 then
+            current_draw_distance=min(current_draw_distance,distance * (max_wall_height-player_height)/relative_height)
+          end
+
+          did_draw=true
+          rectfill(screenx, max_y, screenx+draw_width-1, screeny, colors[1+(iterations%14)])
         end
-
-        rectfill(screenx, lowest_y-1, screenx+draw_width-1, screeny, colors[1+flr(iterations_easing(iterations, current_max_iterations)*15)])
-        lowest_y = screeny
+        max_y = screeny-1
         --printh(draw_width)
       end
     end
 
-    yield()
+    if not did_draw then
+      --printh(screenx..","..screeny)
+    end
 
-    current_max_iterations+=1
+    yield()
 
     first_time=false
   end
 end
 
-function iterations_easing(iterations, current_max)
-  return (iterations/current_max)^0.5
-end
-
 build_buffer_manager = (function()
-  local buffer_percent=.2
+  local buffer_percent=0.2 --TODO - this seems to have little to no effect for progressive, double check the logic
 
   local function reset_state(obj,total_time)
     obj.start_time=stat(1)
@@ -371,6 +393,8 @@ function mandelbrot(x, y, current_max_iterations)
   --   --return 8
   -- end
 
+  current_max_iterations=flr(current_max_iterations)
+
   local zx=cached_grid[key].x
   local zy=cached_grid[key].y
   local xswap
@@ -392,7 +416,7 @@ function mandelbrot(x, y, current_max_iterations)
 end
 
 function screenx_to_angle(screenx)
-  local offset_from_center_of_screen = (screenx - 127/2) * screen_width/128
+  local offset_from_center_of_screen = (screenx - 127/2) * (screen_width/128)
   return makeangle(player.bearing.val+atan2(offset_from_center_of_screen, 1)+1/4)
 end
 
