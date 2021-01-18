@@ -34,6 +34,10 @@ function _init()
     bearing=makeangle(0)
   }
 
+  prog_man={
+    current_max_iterations=1
+  }
+
   buffer_manager = build_buffer_manager()
 end
 
@@ -70,6 +74,8 @@ function _update60()
   player.coords+= offset*speed*player_height
 
   tick_bearing_v()
+
+  prog_man.current_max_iterations+=1/6
 end
 
 function tick_bearing_v()
@@ -86,7 +92,7 @@ function _draw()
     draw_background()
     progressive_coroutine=cocreate(raycast_walls_progressively)
   end
-  assert(coresume(progressive_coroutine))
+  assert(coresume(progressive_coroutine,prog_man))
 
   if debug then
     debug_info()
@@ -128,10 +134,7 @@ function draw_stars()
   end
 end
 
-prog_man={
-  current_max_iterations=1
-}
-function raycast_walls_progressively()
+function raycast_walls_progressively(prog_man)
   local screenx=0
   local pixel_columns={}
   local buffer_manager=build_buffer_manager()
