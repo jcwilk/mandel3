@@ -6,9 +6,9 @@ function _init()
   colors={1,2,5,4,3,13,9,8,14,6,15,12,11,10,7}
 
   orig_field_of_view=1/6
-  orig_draw_distance=4
+  orig_draw_distance=6
   orig_turn_amount=.003
-  orig_speed = .03
+  orig_speed = .01
 
   --debug stuff, disable for release
   force_draw_width=false
@@ -26,7 +26,9 @@ function _init()
   height_zoom_ratio = 1.05
   screen_width = -sin(field_of_view/2) * 2
 
-  player_height = 0.3
+  base_player_height = 0.3
+  player_height = base_player_height
+  player_foot_height = 0
   grid_size = 1/(2^4)
 
   player = {
@@ -62,27 +64,28 @@ function _update60()
     changed_position=true
     offset-=facing
   end
+
+  player.coords+= offset*speed
+
+  prog_man.current_max_iterations+=1/6
+
   if btn(4) then
     changed_height=true
-    player_height/= height_zoom_ratio
+    base_player_height/= height_zoom_ratio
   end
   if btn(5) then
     changed_height=true
-    player_height*= height_zoom_ratio
+    base_player_height*= height_zoom_ratio
   end
 
-  player.coords+= offset*speed*player_height
-
-  tick_bearing_v()
-
-  prog_man.current_max_iterations+=1/6
+  update_player_height()
 end
 
-function tick_bearing_v()
-  if abs(player_bearing_v) > .0005 then
-    player_bearing_v-= tounit(player_bearing_v)*.0005
-    player.bearing+=player_bearing_v
-  end
+function update_player_height()
+  local currx=round(player.coords.x/grid_size)*grid_size
+  local curry=round(player.coords.y/grid_size)*grid_size
+  player_foot_height+=mid(base_player_height*.1,base_player_height*-.1,-player_foot_height+(prog_man.current_max_iterations-mandelbrot(currx,curry,prog_man.current_max_iterations))/1000)
+  player_height=base_player_height+player_foot_height
 end
 
 progressive_coroutine=false
@@ -225,7 +228,7 @@ function raycast_walls_progressively(prog_man)
 end
 
 function raycast_pixel_column(pixel_column) -- TODO: pass in a copy of the player
-  local pa,pv,currx,curry,found,intx,inty,xstep,ystep,distance
+  local pa,pv,currx,curry,intx,inty,xstep,ystep,distance
   local height,distance_to_pixel_col,screeny,max_y,lowest_y,current_draw_distance,blocker_ratio
   local calc_screenx,screenx,draw_width
   local prog_man=pixel_column.prog_man
@@ -266,29 +269,16 @@ function raycast_pixel_column(pixel_column) -- TODO: pass in a copy of the playe
     intx= player.coords.x + distance * pv.x
   end
 
-  found=false
-
   distance_to_pixel_col = 1/cos(pa.val-player.bearing.val)
   max_y = 127
   lowest_y = 128
-  current_draw_distance=min(2,draw_distance*player_height)
+  current_draw_distance=min(2,draw_distance*base_player_height)
   blocker_ratio=false
   did_draw=false
   local max_wall_height=prog_man.current_max_iterations/1000
   local front_distance,temp_max_y
 
-  while not found and distance < current_draw_distance do
-    if (currx + xstep/2 - intx) / pv.x < (curry + ystep/2 - inty) / pv.y then
-      intx= currx + xstep/2
-      distance = (intx - player.coords.x) / pv.x
-      inty= player.coords.y + distance * pv.y
-      currx+= xstep
-    else
-      inty= curry + ystep/2
-      distance = (inty - player.coords.y) / pv.y
-      intx= player.coords.x + distance * pv.x
-      curry+= ystep
-    end
+  while distance < current_draw_distance do
     front_distance=distance
 
     iterations = mandelbrot(currx, curry, prog_man.current_max_iterations) --flr(10*(currx+curry))
@@ -334,6 +324,18 @@ function raycast_pixel_column(pixel_column) -- TODO: pass in a copy of the playe
       end
     else
       did_draw=false
+    end
+
+    if (currx + xstep/2 - intx) / pv.x < (curry + ystep/2 - inty) / pv.y then
+      intx= currx + xstep/2
+      distance = (intx - player.coords.x) / pv.x
+      inty= player.coords.y + distance * pv.y
+      currx+= xstep
+    else
+      inty= curry + ystep/2
+      distance = (inty - player.coords.y) / pv.y
+      intx= player.coords.x + distance * pv.x
+      curry+= ystep
     end
   end
 
