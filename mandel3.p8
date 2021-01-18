@@ -26,8 +26,6 @@ function _init()
   height_zoom_ratio = 1.05
   screen_width = -sin(field_of_view/2) * 2
 
-  max_iterations = 30
-  max_wall_height = 0.5
   player_height = 0.3
   grid_size = 1/(2^4)
 
@@ -267,12 +265,14 @@ function raycast_pixel_column(pixel_column) -- TODO: pass in a copy of the playe
 
   found=false
 
-  distance_to_pixel_col = cos(pa.val-player.bearing.val)
-  max_y = 128
+  distance_to_pixel_col = 1/cos(pa.val-player.bearing.val)
+  max_y = 127
   lowest_y = 128
   current_draw_distance=min(2,draw_distance*player_height)
   blocker_ratio=false
   did_draw=false
+  local max_wall_height=prog_man.current_max_iterations/1000
+  local front_distance,temp_max_y
 
   while not found and distance < current_draw_distance do
     if (currx + xstep/2 - intx) / pv.x < (curry + ystep/2 - inty) / pv.y then
@@ -286,40 +286,37 @@ function raycast_pixel_column(pixel_column) -- TODO: pass in a copy of the playe
       intx= player.coords.x + distance * pv.x
       curry+= ystep
     end
+    front_distance=distance
 
     iterations = mandelbrot(currx, curry, prog_man.current_max_iterations) --flr(10*(currx+curry))
 
-    -- if iterations > prog_man.current_max_iterations then
-    --   printh(iterations)
-    --   printh(prog_man.current_max_iterations)
-    --   gdsfkgldafg()
-    -- end
+    if iterations < flr(prog_man.current_max_iterations) then
+      height = (prog_man.current_max_iterations-iterations)/1000
+      relative_height = height - player_height
 
-    height = (prog_man.current_max_iterations-iterations)/1000
-    relative_height = height - player_height
-
-    if relative_height < 0 then
-      -- hack to make the distance calculated to the far wall rather than close wall for if we can see the top so it doesn't look empty
-      -- distance gets overwritten each iteration so this is (for now) fine to do
-      -- there's probably a more efficient way to do this, but screw it
-      if (currx + xstep/2 - intx) / pv.x < (curry + ystep/2 - inty) / pv.y then
-        distance = (currx + xstep/2 - player.coords.x) / pv.x
-      else
-        distance = (curry + ystep/2 - player.coords.y) / pv.y
+      if relative_height < 0 then
+        -- hack to make the distance calculated to the far wall rather than close wall for if we can see the top so it doesn't look empty
+        -- distance gets overwritten each iteration so this is (for now) fine to do
+        -- there's probably a more efficient way to do this, but screw it
+        if (currx + xstep/2 - intx) / pv.x < (curry + ystep/2 - inty) / pv.y then
+          distance = (currx + xstep/2 - player.coords.x) / pv.x
+        else
+          distance = (curry + ystep/2 - player.coords.y) / pv.y
+        end
       end
-    end
 
-    screen_distance_from_center = relative_height /(distance*distance_to_pixel_col) -- TODO - this doesn't seem right but it works, hmm...
+      screen_distance_from_center = relative_height * distance_to_pixel_col / distance
 
-    pixels_from_center = 128 * (screen_distance_from_center/screen_width)
-    screeny = flr(63.5 - pixels_from_center)
+      pixels_from_center = 128 * (screen_distance_from_center/screen_width)
+      screeny = flr(63.5 - pixels_from_center)
 
-    if screeny <= max_y then
-      if iterations < flr(prog_man.current_max_iterations) then
+      if screeny <= max_y then
         if not did_draw then
-          if screeny < 127 then
-            rectfill(screenx, screeny+1, screenx+draw_width-1, 127, 0)
+          temp_max_y=min(max_y,ceil(63.5 - 128 * ((-player_height * distance_to_pixel_col / front_distance)/screen_width))) --y of bottom front of stretched cube
+          if temp_max_y < max_y then
+            rectfill(screenx, temp_max_y+1, screenx+draw_width-1, max_y, 0)
           end
+          max_y=min(temp_max_y,max_y)
         end
 
         if relative_height > 0 then
@@ -329,9 +326,11 @@ function raycast_pixel_column(pixel_column) -- TODO: pass in a copy of the playe
         did_draw=true
         rectfill(screenx, max_y, screenx+draw_width-1, screeny, colors[1+(iterations%14)])
         lowest_y = min(screeny,lowest_y)
+        max_y = screeny-1
+        --printh(draw_width)
       end
-      max_y = screeny-1
-      --printh(draw_width)
+    else
+      did_draw=false
     end
   end
 
