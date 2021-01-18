@@ -84,19 +84,11 @@ end
 progressive_coroutine=false
 first_draw=true
 function _draw()
-  if changed_position or first_draw then
+  if changed_position or changed_height or first_draw then
     draw_background()
-    raycast_walls()
-    progressive_coroutine=false
-  else
-    if changed_height then
-      draw_background()
-    end
-    if not progressive_coroutine then
-      progressive_coroutine=cocreate(raycast_walls_progressively)
-    end
-    assert(coresume(progressive_coroutine))
+    progressive_coroutine=cocreate(raycast_walls_progressively)
   end
+  assert(coresume(progressive_coroutine))
 
   if debug then
     debug_info()
@@ -120,72 +112,89 @@ function draw_background()
   draw_stars()
 end
 
+stars={}
 function draw_stars()
-  --TODO fuckin thing sucks
+  stars={}
   local x,y,angle
   color(7)
   angle=player.bearing-field_of_view/2
   local init=flr(angle.val*100)
   local final=flr((angle.val+field_of_view)*100)
+  local x
   for i=init,final do
-    pset((i-init)/100/field_of_view*128,64-((i*19)%64)*orig_field_of_view/field_of_view)
+    x=flr((i-init)/100/field_of_view*128)
+    if not stars[x] then
+      stars[x]={}
+    end
+    add(stars[x],flr(64-((i*19)%64)*orig_field_of_view/field_of_view))
   end
 end
 
-local pixel_columns={}
-function raycast_walls()
-  skipped_columns=0
-
-  local screenx=0
-
-  local draw_width
-  largest_width=0
-
-  if changed_position then
-    pixel_columns={}
-    cached_grid={} -- NB: disabling this only works for large grids, otherwise mem will fill quickly
-    --also ^ disabling this doesn't work as expected until progressive is doing all the rendering and current_max_iterations isn't getting reset
-    buffer_manager:reset_state(1)
-  else
-    buffer_manager:reset_state(4)
-  end
-  local calc_screenx
-
-  while screenx<=127 do
-    draw_width=128*buffer_manager:skip_ratio()
-    draw_width=flr(mid(1,8,draw_width))
-    if force_draw_width then
-      draw_width=1
-    end
-    largest_width=max(largest_width,draw_width)
-    skipped_columns+=draw_width-1
-    calc_screenx=screenx+round((draw_width-1)/2)
-
-    if not pixel_columns[calc_screenx] then
-      pixel_columns[calc_screenx] = {
-        calc_screenx=calc_screenx,
-        screenx=screenx,
-        draw_width=draw_width,
-        prog_man={current_max_iterations=1}
-      }
-    else
-      pixel_columns[calc_screenx].draw_width=draw_width
-      pixel_columns[calc_screenx].screenx=screenx
-    end
-    raycast_pixel_column(pixel_columns[calc_screenx])
-
-    screenx+=draw_width
-    buffer_manager.progress_ratio=screenx/128
-  end
-end
-
+prog_man={
+  current_max_iterations=1
+}
 function raycast_walls_progressively()
   local screenx=0
+  local pixel_columns={}
+  local buffer_manager=build_buffer_manager()
+
+  for i=0,127,16 do
+    add(pixel_columns,{
+      calc_screenx=i,
+      screenx=i,
+      prog_man=prog_man,
+      draw_width=16
+    })
+  end
+  for i=8,127,16 do
+    add(pixel_columns,{
+      calc_screenx=i,
+      screenx=i,
+      prog_man=prog_man,
+      draw_width=8
+    })
+  end
+  for i=4,127,8 do
+    add(pixel_columns,{
+      calc_screenx=i,
+      screenx=i,
+      prog_man=prog_man,
+      draw_width=4
+    })
+  end
+  for i=2,127,4 do
+    add(pixel_columns,{
+      calc_screenx=i,
+      screenx=i,
+      prog_man=prog_man,
+      draw_width=2
+    })
+  end
+  for i=1,127,2 do
+    add(pixel_columns,{
+      calc_screenx=i,
+      screenx=i,
+      prog_man=prog_man,
+      draw_width=2
+    })
+  end
+
+  buffer_manager:reset_state(.9)
+
+  for i=1,#pixel_columns do
+    raycast_pixel_column(pixel_columns[i])
+
+    buffer_manager.progress_ratio+=1/128
+    if not buffer_manager:is_finishable(1/128) then
+      yield()
+      prog_man.current_max_iterations+=1/6
+
+      buffer_manager:reset_state(.9) --temporary hack to sidestep the buffer manager bug where it isn't compensating for the buffer
+    end
+  end
+
   pixel_columns={}
-  buffer_manager:reset_state(1)
-  local prog_man={
-    current_max_iterations=1
-  }
+  buffer_manager:reset_state(.9)
 
   while true do
     if not pixel_columns[screenx] then
@@ -216,7 +225,7 @@ end
 
 function raycast_pixel_column(pixel_column) -- TODO: pass in a copy of the player
   local pa,pv,currx,curry,found,intx,inty,xstep,ystep,distance
-  local height,distance_to_pixel_col,max_y,current_draw_distance,blocker_ratio
+  local height,distance_to_pixel_col,screeny,max_y,lowest_y,current_draw_distance,blocker_ratio
   local calc_screenx,screenx,draw_width
   local prog_man=pixel_column.prog_man
 
@@ -260,6 +269,7 @@ function raycast_pixel_column(pixel_column) -- TODO: pass in a copy of the playe
 
   distance_to_pixel_col = cos(pa.val-player.bearing.val)
   max_y = 128
+  lowest_y = 128
   current_draw_distance=min(2,draw_distance*player_height)
   blocker_ratio=false
   did_draw=false
@@ -306,20 +316,36 @@ function raycast_pixel_column(pixel_column) -- TODO: pass in a copy of the playe
 
     if screeny <= max_y then
       if iterations < flr(prog_man.current_max_iterations) then
+        if not did_draw then
+          if screeny < 127 then
+            rectfill(screenx, screeny+1, screenx+draw_width-1, 127, 0)
+          end
+        end
+
         if relative_height > 0 then
           current_draw_distance=min(current_draw_distance,distance * (max_wall_height-player_height)/relative_height)
         end
 
         did_draw=true
         rectfill(screenx, max_y, screenx+draw_width-1, screeny, colors[1+(iterations%14)])
+        lowest_y = min(screeny,lowest_y)
       end
       max_y = screeny-1
       --printh(draw_width)
     end
   end
 
-  if not did_draw then
-    --printh(screenx..","..screeny)
+  if lowest_y > 0 then
+    rectfill(screenx, lowest_y-1, screenx+draw_width-1, 0, 0)
+    for starx=screenx,screenx+draw_width-1 do
+      if stars[starx] then
+        for i=1,#stars[starx] do
+          if stars[starx][i] < lowest_y then
+            pset(starx, stars[starx][i], 7)
+          end
+        end
+      end
+    end
   end
 end
 
