@@ -7,8 +7,8 @@ function _init()
 
   orig_field_of_view=1/6
   orig_draw_distance=4
-  orig_turn_amount=.005
-  orig_speed = .05
+  orig_turn_amount=.003
+  orig_speed = .03
 
   --debug stuff, disable for release
   force_draw_width=false
@@ -192,9 +192,9 @@ function raycast_walls_progressively(prog_man)
 
       buffer_manager:reset_state(.9) --temporary hack to sidestep the buffer manager bug where it isn't compensating for the buffer
     end
+    pixel_columns[i].draw_width=1
   end
 
-  pixel_columns={}
   buffer_manager:reset_state(.9)
 
   while true do
