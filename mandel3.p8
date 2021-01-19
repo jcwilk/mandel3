@@ -30,7 +30,7 @@ function _init()
   player_height = base_player_height
   player_foot_height = 0
   pixel_columns_i = 1
-  grid_size = 1/(2^4)
+  grid_size = 1/(2^5)
 
   max_additional_iterations=10
 
@@ -83,7 +83,7 @@ function _init()
       calc_screenx=i,
       screenx=i,
       prog_man=prog_man,
-      draw_width=2
+      draw_width=1
     })
   end
 
@@ -144,7 +144,7 @@ function _draw()
   if first_draw then
     cls()
   end
-  if first_draw or changed_position then
+  if first_draw or changed_position or changed_height then
     progressive_coroutine=cocreate(raycast_walls_progressively)
   end
   assert(coresume(progressive_coroutine,prog_man))
@@ -186,7 +186,7 @@ end
 
 function raycast_walls_progressively(prog_man)
   local buffer_manager=build_buffer_manager()
-  buffer_manager:reset_state(.9)
+  buffer_manager:reset_state(.8)
 
   local should_recache=true
 
@@ -226,7 +226,7 @@ function raycast_walls_progressively(prog_man)
     if not buffer_manager:is_finishable(1/128) then
       yield()
 
-      buffer_manager:reset_state(.9) --temporary hack to sidestep the buffer manager bug where it isn't compensating for the buffer
+      buffer_manager:reset_state(.8) --temporary hack to sidestep the buffer manager bug where it isn't compensating for the buffer
     end
   end
 end
