@@ -26,9 +26,10 @@ function _init()
   height_zoom_ratio = 1.05
   screen_width = -sin(field_of_view/2) * 2
 
-  base_player_height = 0.3
+  base_player_height = 0.1
   player_height = base_player_height
   player_foot_height = 0
+  pixel_columns_i = 1
   grid_size = 1/(2^4)
 
   player = {
@@ -41,107 +42,8 @@ function _init()
   }
 
   buffer_manager = build_buffer_manager()
-end
 
-function _update60()
-  local offset = makevec2d(0,0)
-  local facing = player.bearing:tovector()
-  changed_position=false
-  changed_height=false
-  if btn(0) then
-    changed_position=true
-    player.bearing-=turn_amount
-  end
-  if btn(1) then
-    changed_position=true
-    player.bearing+=turn_amount
-  end
-  if btn(2) then
-    changed_position=true
-    offset+=facing
-  end
-  if btn(3) then
-    changed_position=true
-    offset-=facing
-  end
-
-  player.coords+= offset*speed
-
-  prog_man.current_max_iterations+=1/6
-
-  if btn(4) then
-    changed_height=true
-    base_player_height/= height_zoom_ratio
-  end
-  if btn(5) then
-    changed_height=true
-    base_player_height*= height_zoom_ratio
-  end
-
-  update_player_height()
-end
-
-function update_player_height()
-  local currx=round(player.coords.x/grid_size)*grid_size
-  local curry=round(player.coords.y/grid_size)*grid_size
-  player_foot_height+=mid(base_player_height*.1,base_player_height*-.1,-player_foot_height+(prog_man.current_max_iterations-mandelbrot(currx,curry,prog_man.current_max_iterations))/1000)
-  player_height=base_player_height+player_foot_height
-end
-
-progressive_coroutine=false
-first_draw=true
-function _draw()
-  if changed_position or changed_height or first_draw then
-    draw_background()
-    progressive_coroutine=cocreate(raycast_walls_progressively)
-  end
-  assert(coresume(progressive_coroutine,prog_man))
-
-  if debug then
-    debug_info()
-  end
-
-  first_draw=false
-end
-
-function debug_info()
-  --printh("DEBUG")
-  --printh(player.bearing.val)
-  --printh(tostr(player.coords.x)..","..tostr(player.coords.y))
-  printh(stat(7))
-  printh(stat(1))
-end
-
-function draw_background()
-  cls()
-  --rectfill(0,0,127,63,1) --sky
-  --rectfill(0,64,127,127,0) --ground
-  draw_stars()
-end
-
-stars={}
-function draw_stars()
-  stars={}
-  local x,y,angle
-  color(7)
-  angle=player.bearing-field_of_view/2
-  local init=flr(angle.val*100)
-  local final=flr((angle.val+field_of_view)*100)
-  local x
-  for i=init,final do
-    x=flr((i-init)/100/field_of_view*128)
-    if not stars[x] then
-      stars[x]={}
-    end
-    add(stars[x],flr(64-((i*19)%64)*orig_field_of_view/field_of_view))
-  end
-end
-
-function raycast_walls_progressively(prog_man)
-  local screenx=0
-  local pixel_columns={}
-  local buffer_manager=build_buffer_manager()
-
+  pixel_columns={}
   for i=0,127,16 do
     add(pixel_columns,{
       calc_screenx=i,
@@ -183,69 +85,179 @@ function raycast_walls_progressively(prog_man)
     })
   end
 
-  buffer_manager:reset_state(.9)
+  draw_stars()
+end
 
-  for i=1,#pixel_columns do
-    raycast_pixel_column(pixel_columns[i])
-
-    buffer_manager.progress_ratio+=1/128
-    if not buffer_manager:is_finishable(1/128) then
-      yield()
-      prog_man.current_max_iterations+=1/6
-
-      buffer_manager:reset_state(.9) --temporary hack to sidestep the buffer manager bug where it isn't compensating for the buffer
-    end
-    pixel_columns[i].draw_width=1
+function _update60()
+  local offset = makevec2d(0,0)
+  local facing = player.bearing:tovector()
+  changed_position=false
+  changed_height=false
+  if btn(0) then
+    changed_position=true
+    player.bearing-=turn_amount
+  end
+  if btn(1) then
+    changed_position=true
+    player.bearing+=turn_amount
+  end
+  if btn(2) then
+    changed_position=true
+    offset+=facing
+  end
+  if btn(3) then
+    changed_position=true
+    offset-=facing
   end
 
+  player.coords+= offset*speed
+
+  prog_man.current_max_iterations+=1/8
+
+  if btn(4) then
+    changed_height=true
+    base_player_height/= height_zoom_ratio
+  end
+  if btn(5) then
+    changed_height=true
+    base_player_height*= height_zoom_ratio
+  end
+
+  update_player_height()
+end
+
+function update_player_height()
+  local currx=round(player.coords.x/grid_size)*grid_size
+  local curry=round(player.coords.y/grid_size)*grid_size
+  local iterations=mandelbrot(currx,curry,flr(prog_man.current_max_iterations))
+  if iterations == flr(prog_man.current_max_iterations) then
+    --TODO - get rid of this clause when we're rendering the mandelbrot normally
+    player_foot_height+=mid(base_player_height*.1,base_player_height*-.1,-player_foot_height+height_transform(iterations, flr(prog_man.current_max_iterations)))
+  else
+    player_foot_height+=mid(base_player_height*.1,base_player_height*-.1,-player_foot_height+height_transform(iterations, prog_man.current_max_iterations))
+  end
+
+  player_height=base_player_height+player_foot_height
+end
+
+progressive_coroutine=false
+first_draw=true
+function _draw()
+  if first_draw then
+    cls()
+  end
+  if first_draw or changed_position then
+    progressive_coroutine=cocreate(raycast_walls_progressively)
+  end
+  assert(coresume(progressive_coroutine,prog_man))
+
+  if debug then
+    debug_info()
+  end
+
+  first_draw=false
+end
+
+function debug_info()
+  --printh("DEBUG")
+  --printh(player.bearing.val)
+  --printh(tostr(player.coords.x)..","..tostr(player.coords.y))
+  if stat(7) < 60 then
+    printh(stat(7))
+    printh(stat(1))
+  end
+end
+
+stars={}
+function draw_stars()
+  stars={}
+  local x,y,angle
+  color(7)
+  angle=player.bearing-field_of_view/2
+  local init=flr(angle.val*100)
+  local final=flr((angle.val+field_of_view)*100)
+  local x
+  for i=init,final do
+    x=flr((i-init)/100/field_of_view*128)
+    if not stars[x] then
+      stars[x]={}
+    end
+    add(stars[x],flr(64-((i*19)%64)*orig_field_of_view/field_of_view))
+  end
+end
+
+function raycast_walls_progressively(prog_man)
+  local buffer_manager=build_buffer_manager()
   buffer_manager:reset_state(.9)
 
+  local should_recache=true
+
+  if pixel_columns_i > 64 then
+    pixel_columns_i = 1
+  end
+  pixel_columns_i_done=pixel_columns_i
+
+  local max_draw_width=min(8,pixel_columns[pixel_columns_i].draw_width)
+  local drawn_all=false
+  local resetting=false
+
   while true do
-    if not pixel_columns[screenx] then
-      pixel_columns[screenx] = {
-        calc_screenx=screenx,
-        screenx=screenx,
-        prog_man=prog_man,
-        draw_width=1
-      }
-    end
-    raycast_pixel_column(pixel_columns[screenx])
+    raycast_pixel_column(pixel_columns[pixel_columns_i], max_draw_width, should_recache)
+    pixel_columns_i+=1
 
-    screenx+=1
-    if screenx > 127 then
-      screenx=0
+    if pixel_columns_i > 64 and not drawn_all then
+      pixel_columns_i=1
+      resetting=true
     end
-    --screenx=flr(rnd(128))
-
+    if pixel_columns_i > #pixel_columns then
+      pixel_columns_i=1
+      resetting=true
+    end
+    if pixel_columns_i == pixel_columns_i_done then
+      drawn_all=true
+    end
+    if resetting then
+      resetting=false
+      if drawn_all then
+      should_recache=false
+        --kjfgkdfjgd()
+        max_draw_width=1
+      end
+    end
     buffer_manager.progress_ratio+=1/128
     if not buffer_manager:is_finishable(1/128) then
       yield()
-      prog_man.current_max_iterations+=1/6
 
       buffer_manager:reset_state(.9) --temporary hack to sidestep the buffer manager bug where it isn't compensating for the buffer
     end
   end
 end
 
-function raycast_pixel_column(pixel_column) -- TODO: pass in a copy of the player
+function raycast_pixel_column(pixel_column, max_draw_width, should_recache) -- TODO: pass in a copy of the player
   local pa,pv,currx,curry,intx,inty,xstep,ystep,distance
   local height,distance_to_pixel_col,screeny,max_y,lowest_y,current_draw_distance,blocker_ratio
   local calc_screenx,screenx,draw_width
   local prog_man=pixel_column.prog_man
 
-  calc_screenx=pixel_column.calc_screenx
-  if not pixel_column.pa then
-    pixel_column.pa=screenx_to_angle(calc_screenx) -- TODO: make this take in a copy of the player
+  if should_recache or not pixel_column.cache then
+    pixel_column.cache={}
   end
-  pa=pixel_column.pa
 
-  if not pixel_column.pv then
-    pixel_column.pv=pa:tovector()
+  local cache=pixel_column.cache
+
+  calc_screenx=pixel_column.calc_screenx
+  if not cache.pa then
+    cache.pa=screenx_to_angle(calc_screenx) -- TODO: make this take in a copy of the player
   end
-  pv=pixel_column.pv
+  pa=cache.pa
+
+  if not cache.pv then
+    cache.pv=pa:tovector()
+  end
+  pv=cache.pv
 
   screenx=pixel_column.screenx
-  draw_width=pixel_column.draw_width
+  draw_width=min(max_draw_width, pixel_column.draw_width)
 
   currx=round(player.coords.x/grid_size)*grid_size
   curry=round(player.coords.y/grid_size)*grid_size
@@ -275,7 +287,7 @@ function raycast_pixel_column(pixel_column) -- TODO: pass in a copy of the playe
   current_draw_distance=min(2,draw_distance*base_player_height)
   blocker_ratio=false
   did_draw=false
-  local max_wall_height=prog_man.current_max_iterations/1000
+  local max_wall_height=height_transform(0, prog_man.current_max_iterations)
   local front_distance,temp_max_y
 
   while distance < current_draw_distance do
@@ -284,7 +296,7 @@ function raycast_pixel_column(pixel_column) -- TODO: pass in a copy of the playe
     iterations = mandelbrot(currx, curry, prog_man.current_max_iterations) --flr(10*(currx+curry))
 
     if iterations < flr(prog_man.current_max_iterations) then
-      height = (prog_man.current_max_iterations-iterations)/1000
+      height = height_transform(iterations, prog_man.current_max_iterations)
       relative_height = height - player_height
 
       if relative_height < 0 then
@@ -351,6 +363,10 @@ function raycast_pixel_column(pixel_column) -- TODO: pass in a copy of the playe
       end
     end
   end
+end
+
+function height_transform(iterations, iter_max)
+  return (iter_max-iterations)^0.5/200
 end
 
 build_buffer_manager = (function()
