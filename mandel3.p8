@@ -32,6 +32,8 @@ function _init()
   pixel_columns_i = 1
   grid_size = 1/(2^4)
 
+  max_additional_iterations=10
+
   player = {
     coords=makevec2d(-0.5,0),
     bearing=makeangle(0)
@@ -112,7 +114,7 @@ function _update60()
 
   player.coords+= offset*speed
 
-  prog_man.current_max_iterations+=1/8
+  prog_man.current_max_iterations+=1
 
   if btn(4) then
     changed_height=true
@@ -130,12 +132,8 @@ function update_player_height()
   local currx=round(player.coords.x/grid_size)*grid_size
   local curry=round(player.coords.y/grid_size)*grid_size
   local iterations=mandelbrot(currx,curry,flr(prog_man.current_max_iterations))
-  if iterations == flr(prog_man.current_max_iterations) then
-    --TODO - get rid of this clause when we're rendering the mandelbrot normally
-    player_foot_height+=mid(base_player_height*.1,base_player_height*-.1,-player_foot_height+height_transform(iterations, flr(prog_man.current_max_iterations)))
-  else
-    player_foot_height+=mid(base_player_height*.1,base_player_height*-.1,-player_foot_height+height_transform(iterations, prog_man.current_max_iterations))
-  end
+  player_foot_height+=mid(base_player_height*.1,base_player_height*-.1,-player_foot_height+height_transform(iterations))
+
 
   player_height=base_player_height+player_foot_height
 end
@@ -287,7 +285,7 @@ function raycast_pixel_column(pixel_column, max_draw_width, should_recache) -- T
   current_draw_distance=min(2,draw_distance*base_player_height)
   blocker_ratio=false
   did_draw=false
-  local max_wall_height=height_transform(0, prog_man.current_max_iterations)
+  local max_wall_height=height_transform(prog_man.current_max_iterations)
   local front_distance,temp_max_y
 
   while distance < current_draw_distance do
@@ -295,8 +293,8 @@ function raycast_pixel_column(pixel_column, max_draw_width, should_recache) -- T
 
     iterations = mandelbrot(currx, curry, prog_man.current_max_iterations) --flr(10*(currx+curry))
 
-    if iterations < flr(prog_man.current_max_iterations) then
-      height = height_transform(iterations, prog_man.current_max_iterations)
+    if true then --iterations < flr(prog_man.current_max_iterations) then
+      height = height_transform(iterations)
       relative_height = height - player_height
 
       if relative_height < 0 then
@@ -329,6 +327,20 @@ function raycast_pixel_column(pixel_column, max_draw_width, should_recache) -- T
         end
 
         did_draw=true
+
+        if iterations == flr(prog_man.current_max_iterations) then
+          if relative_height < 0 then
+            front_screen_distance_from_center = relative_height * distance_to_pixel_col / front_distance
+            front_pixels_from_center = 128 * (front_screen_distance_from_center/screen_width)
+            front_screeny = flr(63.5 - front_pixels_from_center)
+            if front_screeny <= max_y then
+              rectfill(screenx, max_y, screenx+draw_width-1, front_screeny, colors[1+(iterations%14)])
+              max_y = front_screeny-1
+            end
+          iterations=0
+          end
+        end
+
         rectfill(screenx, max_y, screenx+draw_width-1, screeny, colors[1+(iterations%14)])
         lowest_y = min(screeny,lowest_y)
         max_y = screeny-1
@@ -365,8 +377,8 @@ function raycast_pixel_column(pixel_column, max_draw_width, should_recache) -- T
   end
 end
 
-function height_transform(iterations, iter_max)
-  return (iter_max-iterations)^0.5/200
+function height_transform(iterations)
+  return (iterations)^0.1 / 4
 end
 
 build_buffer_manager = (function()
@@ -414,6 +426,9 @@ end)()
 cached_grid={}
 function mandelbrot(x, y, current_max_iterations)
   y=abs(y)
+  if abs(x) > 2 or abs(y) > 2 then
+    return 0
+  end
   local key=tostr(x,true)..tostr(y,true)
   if not cached_grid[key] then
     cached_grid[key]={
@@ -428,13 +443,13 @@ function mandelbrot(x, y, current_max_iterations)
   --   --return 8
   -- end
 
-  current_max_iterations=flr(current_max_iterations)
-
   local zx=cached_grid[key].x
   local zy=cached_grid[key].y
   local xswap
 
   local i=cached_grid[key].i
+
+  current_max_iterations=min(flr(current_max_iterations),i+max_additional_iterations)
   while i < current_max_iterations and abs(zx) < 2 and abs(zy) < 2 do
     i+= 1
 
