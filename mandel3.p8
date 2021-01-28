@@ -26,17 +26,19 @@ function _init()
   height_zoom_ratio = 1.05
   screen_width = -sin(field_of_view/2) * 2
 
-  base_player_height = 0.1
+  base_player_height = 0.105
   player_height = base_player_height
   player_foot_height = 0
   pixel_columns_i = 1
-  grid_size = 1/(2^5)
+  grid_size = 1/(2^6)
 
   max_additional_iterations=10
 
+  cached_grid=two_dim()
+
   player = {
-    coords=makevec2d(-0.5,0),
-    bearing=makeangle(0)
+    coords=makevec2d(-1.655,0.2074),
+    bearing=makeangle(.3)
   }
 
   prog_man={
@@ -126,16 +128,18 @@ function _update60()
   end
 
   update_player_height()
+
+  --printh(player.coords.x..","..player.coords.y)
 end
 
 function update_player_height()
-  local currx=round(player.coords.x/grid_size)*grid_size
-  local curry=round(player.coords.y/grid_size)*grid_size
-  local iterations=mandelbrot(currx,curry,flr(prog_man.current_max_iterations))
-  player_foot_height+=mid(base_player_height*.1,base_player_height*-.1,-player_foot_height+height_transform(iterations))
+  if not first_iterations then
+    return
+  end
 
-
+  player_foot_height+=mid(base_player_height*.1,base_player_height*-.1,height_transform(first_iterations)-player_foot_height)
   player_height=base_player_height+player_foot_height
+  first_iterations=false
 end
 
 progressive_coroutine=false
@@ -145,6 +149,7 @@ function _draw()
     cls()
   end
   if first_draw or changed_position or changed_height then
+    grid_size=1/(2^(mid(ceil(1/base_player_height)-4,4,8)))
     progressive_coroutine=cocreate(raycast_walls_progressively)
   end
   assert(coresume(progressive_coroutine,prog_man))
@@ -217,7 +222,7 @@ function raycast_walls_progressively(prog_man)
     if resetting then
       resetting=false
       if drawn_all then
-      should_recache=false
+        should_recache=false
         --kjfgkdfjgd()
         max_draw_width=1
       end
@@ -225,7 +230,6 @@ function raycast_walls_progressively(prog_man)
     buffer_manager.progress_ratio+=1/128
     if not buffer_manager:is_finishable(1/128) then
       yield()
-
       buffer_manager:reset_state(.8) --temporary hack to sidestep the buffer manager bug where it isn't compensating for the buffer
     end
   end
@@ -257,10 +261,15 @@ function raycast_pixel_column(pixel_column, max_draw_width, should_recache) -- T
   screenx=pixel_column.screenx
   draw_width=min(max_draw_width, pixel_column.draw_width)
 
-  currx=round(player.coords.x/grid_size)*grid_size
-  curry=round(player.coords.y/grid_size)*grid_size
-  xstep=towinf(pv.x)*grid_size
-  ystep=towinf(pv.y)*grid_size
+  local current_grid_size=grid_size
+
+  xstep=towinf(pv.x)*current_grid_size
+  ystep=towinf(pv.y)*current_grid_size
+  currx=round((player.coords.x+xstep/2)/current_grid_size)*current_grid_size-xstep/2
+  curry=round((player.coords.y+ystep/2)/current_grid_size)*current_grid_size-ystep/2
+
+  local initx=currx
+  local inity=curry
 
   -- TODO: make this stuff work with the variable grid size
   -- take the largest coord difference from player coord (eg, if most of the difference is across x, then take x difference)
@@ -291,9 +300,13 @@ function raycast_pixel_column(pixel_column, max_draw_width, should_recache) -- T
   while distance < current_draw_distance do
     front_distance=distance
 
-    iterations = mandelbrot(currx, curry, prog_man.current_max_iterations) --flr(10*(currx+curry))
+    iterations = mandelbrot(currx, curry, prog_man.current_max_iterations, current_grid_size) --flr(10*(currx+curry))
 
-    if true then --iterations < flr(prog_man.current_max_iterations) then
+    if not first_iterations then
+      first_iterations=iterations
+    end
+
+    if iterations < flr(prog_man.current_max_iterations) then
       height = height_transform(iterations)
       relative_height = height - player_height
 
@@ -312,42 +325,51 @@ function raycast_pixel_column(pixel_column, max_draw_width, should_recache) -- T
 
       pixels_from_center = 128 * (screen_distance_from_center/screen_width)
       screeny = flr(63.5 - pixels_from_center)
-
-      if screeny <= max_y then
-        if not did_draw then
-          temp_max_y=min(max_y,ceil(63.5 - 128 * ((-player_height * distance_to_pixel_col / front_distance)/screen_width))) --y of bottom front of stretched cube
-          if temp_max_y < max_y then
-            rectfill(screenx, temp_max_y+1, screenx+draw_width-1, max_y, 0)
-          end
-          max_y=min(temp_max_y,max_y)
-        end
-
-        if relative_height > 0 then
-          current_draw_distance=min(current_draw_distance,distance * (max_wall_height-player_height)/relative_height)
-        end
-
-        did_draw=true
-
-        if iterations == flr(prog_man.current_max_iterations) then
-          if relative_height < 0 then
-            front_screen_distance_from_center = relative_height * distance_to_pixel_col / front_distance
-            front_pixels_from_center = 128 * (front_screen_distance_from_center/screen_width)
-            front_screeny = flr(63.5 - front_pixels_from_center)
-            if front_screeny <= max_y then
-              rectfill(screenx, max_y, screenx+draw_width-1, front_screeny, colors[1+(iterations%14)])
-              max_y = front_screeny-1
-            end
-          iterations=0
-          end
-        end
-
-        rectfill(screenx, max_y, screenx+draw_width-1, screeny, colors[1+(iterations%14)])
-        lowest_y = min(screeny,lowest_y)
-        max_y = screeny-1
-        --printh(draw_width)
-      end
     else
-      did_draw=false
+      relative_height=1 -- ignored but we just need it to be positive
+      screeny=0
+    end
+
+    if screeny <= max_y then
+      if not did_draw then
+        temp_max_y=min(max_y,ceil(63.5 - 128 * ((-player_height * distance_to_pixel_col / front_distance)/screen_width))) --y of bottom front of stretched cube
+        if temp_max_y < max_y then
+          rectfill(screenx, temp_max_y+1, screenx+draw_width-1, max_y, 0)
+        end
+        max_y=min(temp_max_y,max_y)
+      end
+
+      if relative_height > 0 then
+        current_draw_distance=min(current_draw_distance,distance * (max_wall_height-player_height)/relative_height)
+      end
+
+      did_draw=true
+
+      if iterations == flr(prog_man.current_max_iterations) then
+        if relative_height < 0 then
+          front_screen_distance_from_center = relative_height * distance_to_pixel_col / front_distance
+          front_pixels_from_center = 128 * (front_screen_distance_from_center/screen_width)
+          front_screeny = flr(63.5 - front_pixels_from_center)
+          if front_screeny <= max_y then
+            rectfill(screenx, max_y, screenx+draw_width-1, front_screeny, colors[1+(iterations%14)])
+            max_y = front_screeny-1
+          end
+        iterations=0
+        end
+      end
+
+      rectfill(screenx, max_y, screenx+draw_width-1, screeny, colors[1+(iterations%14)])
+      lowest_y = min(screeny,lowest_y)
+      max_y = screeny-1
+      --printh(draw_width)
+    end
+
+    if abs(initx - currx) == current_grid_size * 4 or abs(inity-curry) == current_grid_size * 4 then
+      current_grid_size*=2
+      xstep*=2
+      ystep*=2
+      currx=round((currx+xstep/2)/current_grid_size)*current_grid_size-xstep/2
+      curry=round((curry+ystep/2)/current_grid_size)*current_grid_size-ystep/2
     end
 
     if (currx + xstep/2 - intx) / pv.x < (curry + ystep/2 - inty) / pv.y then
@@ -423,34 +445,32 @@ build_buffer_manager = (function()
   end
 end)()
 
-cached_grid={}
-function mandelbrot(x, y, current_max_iterations)
-  y=abs(y)
-  if abs(x) > 2 or abs(y) > 2 then
-    return 0
-  end
-  local key=tostr(x,true)..tostr(y,true)
-  if not cached_grid[key] then
-    cached_grid[key]={
-      x=0,
-      y=0,
-      i=0
+function mandelbrot(x, y, current_max_iterations, current_grid_size)
+  local y=abs(y)
+  x=towinf(x/current_grid_size)*current_grid_size
+  y=towinf(y/current_grid_size)*current_grid_size
+  if not cached_grid[x][y] then
+    cached_grid[x][y]={
+      0,
+      0,
+      0
     }
   end
 
-  -- if true then
-  --   return 16-mid(1,15,10*(abs(x)+abs(y)))
-  --   --return 8
-  -- end
+  if cached_grid[x][y][3] >= flr(current_max_iterations) then
+    return flr(current_max_iterations)
+  end
 
-  local zx=cached_grid[key].x
-  local zy=cached_grid[key].y
+  local cache=cached_grid[x][y]
+
+  local zx=cache[1]
+  local zy=cache[2]
   local xswap
 
-  local i=cached_grid[key].i
+  local i=cache[3]
 
-  current_max_iterations=min(flr(current_max_iterations),i+max_additional_iterations)
-  while i < current_max_iterations and abs(zx) < 2 and abs(zy) < 2 do
+  local max_iterations=min(flr(current_max_iterations),i+max_additional_iterations)
+  while i < max_iterations and abs(zx) < 2 and abs(zy) < 2 do
     i+= 1
 
     xswap = zx*zx - zy*zy + x
@@ -458,11 +478,14 @@ function mandelbrot(x, y, current_max_iterations)
     zx = xswap
   end
 
-  cached_grid[key].x = zx
-  cached_grid[key].y = zy
-  cached_grid[key].i = i
-
-  return i
+  cache[1]=zx
+  cache[2]=zy
+  cache[3]=i
+  if i == max_iterations then
+    return flr(current_max_iterations)
+  else
+    return i
+  end
 end
 
 function screenx_to_angle(screenx)
@@ -592,6 +615,18 @@ function towinf(n) -- rounds to the larger number regardless of sign (eg, -0.4 t
  else
   return flr(n)
  end
+end
+
+two_dim_parent_mt={
+  __index=function(obj,key)
+    obj[key]={}
+    return obj[key]
+  end
+}
+function two_dim()
+  local obj={}
+  setmetatable(obj,two_dim_parent_mt)
+  return obj
 end
 __gfx__
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
