@@ -6,13 +6,12 @@ function _init()
   colors={1,2,5,4,3,13,9,8,14,6,15,12,11,10,7}
 
   orig_field_of_view=1/6
-  orig_draw_distance=6
   orig_turn_amount=.003
-  orig_speed = .01
+  orig_speed = .1
 
   --debug stuff, disable for release
   force_draw_width=false
-  debug=false
+  debug=true
   --
 
   largest_width=0
@@ -20,32 +19,30 @@ function _init()
   skipped_columns=0
 
   field_of_view=orig_field_of_view -- 45*
-  draw_distance=orig_draw_distance
   turn_amount=orig_turn_amount
   speed = orig_speed
   height_zoom_ratio = 1.05
   screen_width = -sin(field_of_view/2) * 2
 
-  base_player_height = 0.105
+  base_player_height = 0.09
   player_height = base_player_height
   player_foot_height = 0
   pixel_columns_i = 1
-  grid_size = 1/(2^6)
 
-  max_additional_iterations=10
+  grid_division_factor = 5
+
+  max_additional_iterations=5
 
   cached_grid=two_dim()
 
   player = {
-    coords=makevec2d(-1.655,0.2074),
-    bearing=makeangle(.3)
+    coords=makevec2d(-.749,1.1),
+    bearing=makeangle(.5)
   }
 
   prog_man={
     current_max_iterations=1
   }
-
-  buffer_manager = build_buffer_manager()
 
   pixel_columns={}
   for i=0,127,16 do
@@ -114,17 +111,37 @@ function _update60()
     offset-=facing
   end
 
-  player.coords+= offset*speed
+  player.coords+= offset*speed*base_player_height
 
   prog_man.current_max_iterations+=1
 
-  if btn(4) then
+  if btn(5) then
     changed_height=true
     base_player_height/= height_zoom_ratio
   end
-  if btn(5) then
+  if btn(4) then
     changed_height=true
     base_player_height*= height_zoom_ratio
+  end
+  if changed_height or not grid_size then
+    if 1/(2^(grid_division_factor+1)) > base_player_height/6 then
+      grid_division_factor+=1
+    elseif 1/(2^(grid_division_factor-1)) < base_player_height/6 then
+      grid_division_factor-=1
+    end
+
+    grid_size=1/(2^grid_division_factor)
+    draw_distance=base_player_height*10
+  end
+
+  if stat(0)/2048 > 0.9 then
+    reset_grid_cache=60
+    cached_grid=two_dim()
+  elseif reset_grid_cache then
+    reset_grid_cache-=1
+    if reset_grid_cache<=0 then
+      reset_grid_cache=false
+    end
   end
 
   update_player_height()
@@ -148,11 +165,22 @@ function _draw()
   if first_draw then
     cls()
   end
-  if first_draw or changed_position or changed_height then
-    grid_size=1/(2^(mid(ceil(1/base_player_height)-4,4,8)))
-    progressive_coroutine=cocreate(raycast_walls_progressively)
+
+  if is_drawing then
+    assert(coresume(progressive_coroutine,prog_man))
+  else
+    if first_draw or changed_position or changed_height then
+      progressive_coroutine=cocreate(raycast_walls_progressively)
+    end
+    is_drawing=true
+    assert(coresume(progressive_coroutine,prog_man))
   end
-  assert(coresume(progressive_coroutine,prog_man))
+
+  if reset_grid_cache then
+    rectfill(25,59,102,67,1)
+    rectfill(26,60,101,66,0)
+    print("reclaiming cache...",27,61,7)
+  end
 
   if debug then
     debug_info()
@@ -190,9 +218,6 @@ function draw_stars()
 end
 
 function raycast_walls_progressively(prog_man)
-  local buffer_manager=build_buffer_manager()
-  buffer_manager:reset_state(.8)
-
   local should_recache=true
 
   if pixel_columns_i > 64 then
@@ -227,11 +252,6 @@ function raycast_walls_progressively(prog_man)
         max_draw_width=1
       end
     end
-    buffer_manager.progress_ratio+=1/128
-    if not buffer_manager:is_finishable(1/128) then
-      yield()
-      buffer_manager:reset_state(.8) --temporary hack to sidestep the buffer manager bug where it isn't compensating for the buffer
-    end
   end
 end
 
@@ -261,12 +281,10 @@ function raycast_pixel_column(pixel_column, max_draw_width, should_recache) -- T
   screenx=pixel_column.screenx
   draw_width=min(max_draw_width, pixel_column.draw_width)
 
-  local current_grid_size=grid_size
-
-  xstep=towinf(pv.x)*current_grid_size
-  ystep=towinf(pv.y)*current_grid_size
-  currx=round((player.coords.x+xstep/2)/current_grid_size)*current_grid_size-xstep/2
-  curry=round((player.coords.y+ystep/2)/current_grid_size)*current_grid_size-ystep/2
+  xstep=towinf(pv.x)*grid_size
+  ystep=towinf(pv.y)*grid_size
+  currx=round((player.coords.x+xstep/2)/grid_size)*grid_size-xstep/2
+  curry=round((player.coords.y+ystep/2)/grid_size)*grid_size-ystep/2
 
   local initx=currx
   local inity=curry
@@ -291,20 +309,22 @@ function raycast_pixel_column(pixel_column, max_draw_width, should_recache) -- T
   distance_to_pixel_col = 1/cos(pa.val-player.bearing.val)
   max_y = 127
   lowest_y = 128
-  current_draw_distance=min(2,draw_distance*base_player_height)
+  current_draw_distance=draw_distance
   blocker_ratio=false
   did_draw=false
+  local first_loop=true
   local max_wall_height=height_transform(prog_man.current_max_iterations)
   local front_distance,temp_max_y
 
   while distance < current_draw_distance do
     front_distance=distance
 
-    iterations = mandelbrot(currx, curry, prog_man.current_max_iterations, current_grid_size) --flr(10*(currx+curry))
+    iterations = mandelbrot(currx, curry, prog_man.current_max_iterations) --flr(10*(currx+curry))
 
-    if not first_iterations then
+    if first_loop and not first_iterations then
       first_iterations=iterations
     end
+    first_loop=false
 
     if iterations < flr(prog_man.current_max_iterations) then
       height = height_transform(iterations)
@@ -364,12 +384,9 @@ function raycast_pixel_column(pixel_column, max_draw_width, should_recache) -- T
       --printh(draw_width)
     end
 
-    if abs(initx - currx) == current_grid_size * 4 or abs(inity-curry) == current_grid_size * 4 then
-      current_grid_size*=2
-      xstep*=2
-      ystep*=2
-      currx=round((currx+xstep/2)/current_grid_size)*current_grid_size-xstep/2
-      curry=round((curry+ystep/2)/current_grid_size)*current_grid_size-ystep/2
+    if stat(1) > 0.9 then
+      is_drawing=false
+      yield()
     end
 
     if (currx + xstep/2 - intx) / pv.x < (curry + ystep/2 - inty) / pv.y then
@@ -400,55 +417,33 @@ function raycast_pixel_column(pixel_column, max_draw_width, should_recache) -- T
 end
 
 function height_transform(iterations)
-  return (iterations)^0.1 / 4
+  return iterations^min(.5,base_player_height)/5
 end
 
-build_buffer_manager = (function()
-  local buffer_percent=0.2 --TODO - this seems to have little to no effect for progressive, double check the logic
+log10_table = {
+ 0, 0.3, 0.475,
+ 0.6, 0.7, 0.775,
+ 0.8375, 0.9, 0.95, 1
+}
 
-  local function reset_state(obj,total_time)
-    obj.start_time=stat(1)
-    obj.alotted_time=total_time-obj.start_time
+function logx(x,n)
+  return log10(n)/log10(x)
+end
 
-    obj.start_time+=buffer_percent*obj.alotted_time
-    obj.alotted_time-=buffer_percent*obj.alotted_time
+function log10(n)
+ if (n < 1) return nil
+ local e = 0
+ while n > 10 do
+  n /= 10
+  e += 1
+ end
+ return log10_table[flr(n)] + e
+end
 
-    obj.progress_ratio=0
-  end
-
-  local function skip_ratio(obj)
-    --behind_time=stat(1)-(obj.start_time+progress_ratio*obj.alotted_time-obj.buffer_time)
-    --skip_ratio=behind_time/obj.alotted_time
-    --v reduced from ^
-    return (stat(1)-obj.start_time)/obj.alotted_time + buffer_percent - obj.progress_ratio
-  end
-
-  local function is_finishable(obj,additional_progress)
-    local spent_time = stat(1) - obj.start_time
-    -- local remaining_time = obj.alotted_time - spent_time
-    -- local progress_rate = obj.progress_ratio / spent_time
-    -- local additional_time_to_finish = additional_progress / progress_rate
-    -- return remaining_time >= additional_time_to_finish
-    -- v from this ^
-
-    return spent_time <= 0 or obj.alotted_time/spent_time - 1 >= additional_progress / obj.progress_ratio
-  end
-
-  return function()
-    local obj={
-      reset_state=reset_state,
-      skip_ratio=skip_ratio,
-      is_finishable=is_finishable
-    }
-    obj:reset_state(1)
-    return obj
-  end
-end)()
-
-function mandelbrot(x, y, current_max_iterations, current_grid_size)
+function mandelbrot(x, y, current_max_iterations)
   local y=abs(y)
-  x=towinf(x/current_grid_size)*current_grid_size
-  y=towinf(y/current_grid_size)*current_grid_size
+  x=towinf(x/grid_size)*grid_size
+  y=towinf(y/grid_size)*grid_size
   if not cached_grid[x][y] then
     cached_grid[x][y]={
       0,
