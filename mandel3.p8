@@ -371,13 +371,15 @@ function raycast_pixel_column(pixel_column, max_draw_width, should_recache) -- T
     screeny = flr(63.5 - pixels_from_center)
 
     if screeny <= max_y then
-      if not did_draw then
-        temp_max_y=min(max_y,ceil(63.5 - 128 * ((-player_height * distance_to_pixel_col / front_distance)/screen_width))) --y of bottom front of stretched cube
-        if temp_max_y < max_y then
-          rectfill(screenx, temp_max_y+1, screenx+draw_width-1, max_y, 0)
-        end
-        max_y=min(temp_max_y,max_y)
-      end
+      -- this draws black from bottom of the screen up to the lowest thing we draw if the lowest thing isn't at the bottom
+      -- hypothetically this might not be necessary, but leaving it commented for now
+      -- if not did_draw then
+      --   temp_max_y=min(max_y,ceil(63.5 - 128 * ((-player_height * distance_to_pixel_col / front_distance)/screen_width))) --y of bottom front of stretched cube
+      --   if temp_max_y < max_y then
+      --     rectfill(screenx, temp_max_y+1, screenx+draw_width-1, max_y, 0)
+      --   end
+      --   max_y=min(temp_max_y,max_y)
+      -- end
 
       if relative_height > 0 then
         current_draw_distance=min(current_draw_distance,distance * (max_wall_height-player_height)/relative_height)
@@ -385,7 +387,25 @@ function raycast_pixel_column(pixel_column, max_draw_width, should_recache) -- T
 
       did_draw=true
 
-      rectfill(screenx, max_y, screenx+draw_width-1, screeny, colors[1+(iterations%14)])
+      if front_distance < distance then
+        --draw the front first
+        screen_distance_from_center_front = relative_height * distance_to_pixel_col / front_distance
+
+        pixels_from_center_front = 128 * (screen_distance_from_center_front/screen_width)
+        screeny_front = flr(63.5 - pixels_from_center_front)
+        if screeny_front <= max_y then
+          rectfill(screenx, max_y, screenx+draw_width-1, screeny_front, color_transform(iterations))
+          max_y=screeny_front-1
+        end
+
+        --then draw the top
+        if screeny <= max_y then
+          rectfill(screenx, max_y, screenx+draw_width-1, screeny, color_transform(iterations,true))
+        end
+      else
+        rectfill(screenx, max_y, screenx+draw_width-1, screeny, color_transform(iterations))
+      end
+      fillp(0)
       lowest_y = min(screeny,lowest_y)
       max_y = screeny-1
       --printh(draw_width)
@@ -430,8 +450,37 @@ function raycast_pixel_column(pixel_column, max_draw_width, should_recache) -- T
   end
 end
 
+shift_map={1, 9, 13, 2, 4, 12, 14, 6, 11, 8, 3, 7, 5, 0, 10, 15}
+iteration_cache={}
+function color_transform(iterations,is_top)
+  if iterations < 100 then
+    iterations*=4
+  else
+    iterations+=400
+  end
+  if is_top then
+    iterations+=8
+  end
+  if iteration_cache[iterations] then
+    fillp(iteration_cache[iterations][2])
+    return iteration_cache[iterations][1]
+  end
+
+  local scaled=(iterations/16) % 14
+
+  local diff=ceil(scaled)-scaled
+  local flp=0
+  for i=1,flr(diff*16) do
+    flp|=shl(1,shift_map[i+1])
+  end
+
+  fillp(flp)
+  iteration_cache[iterations] = {colors[1+ceil(scaled)]+colors[1+flr(scaled)]*16,flp}
+  return iteration_cache[iterations][1]
+end
+
 function height_transform(iterations)
-  return iterations^min(.5,base_player_height)/5
+  return iterations^min(.5,base_player_height)/4
 end
 
 log10_table = {
